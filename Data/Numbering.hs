@@ -1,4 +1,5 @@
-{-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE NoMonomorphismRestriction, DeriveDataTypeable #-}
+{-# OPTIONS -Wall -fno-warn-unused-imports #-}
 module Data.Numbering where
 
 import Data.Map(Map)
@@ -13,6 +14,13 @@ import qualified Data.Set as S
 import Data.Set(Set)
 import Data.Typeable(Typeable)
 import Control.Exception
+import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Unboxed as VU
+import Data.Vector.Unboxed(Unbox)
+import Data.Monoid(mempty)
+import Data.Monoid(Monoid)
+import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 
 
 -- | Invariant: For all @i@ in @[ 0 .. 'nuLength' - 1 ]@, @'toInt' ('fromInt' i) == i@. 
@@ -128,29 +136,61 @@ nuFromSet m =
                     (M.lookupIndex a m)) 
         (M.size m)
 
+
+
 -- | The distinctness precondition is checked (we have to create a map anyway).
-nuFromDistinctVector :: (Show a, Ord a) => V.Vector a -> Numbering a
-nuFromDistinctVector v =
+nuFromDistinctVector
+  :: (Ord a, Show a, VG.Vector v a) => v a -> Numbering a
+nuFromDistinctVector = nuFromDistinctVectorG M.insertWithKey M.lookup 
+
+nuFromDistinctVectorG
+  :: (Show a1,
+      Show t1,
+      Show a2,
+      Monoid a,
+      VG.Vector v a2) =>
+     ((a1 -> t1 -> t1 -> t) -> a2 -> Int -> a -> a)
+     -> (a2 -> a -> Maybe Int) -> v a2 -> Numbering a2
+nuFromDistinctVectorG _insertWithKey _lookup v =
     let
-        m = V.ifoldl' (\r i a -> M.insertWithKey _err a i r) M.empty v
+        m = VG.ifoldl' (\r i a -> _insertWithKey _err a i r) mempty v
 
         _err a i1 i2 = error ("nuFromDistinctVector: duplicate: " ++ show a++ " at indices "++show (i1,i2))
     in
         UnsafeMkNumbering
             (\a -> fromMaybe
                         (error ("nuFromDistinctVector: Element not in Numbering: "++show a))
-                        (M.lookup a m)) 
-            (v V.!)
-            (V.length v)
+                        (_lookup a m)) 
+            (v VG.!)
+            (VG.length v)
 
 -- | See 'nuFromDistinctVector'.
 nuFromDistinctList :: (Ord a, Show a) => [a] -> Numbering a
 nuFromDistinctList = nuFromDistinctVector . V.fromList 
 
+nuFromDistinctUnboxList :: (Ord a, Show a, Unbox a) => [a] -> Numbering a
+nuFromDistinctUnboxList = nuFromDistinctVector . VU.fromList 
+
+nuFromDistinctIntList :: [IM.Key] -> Numbering IM.Key
+nuFromDistinctIntList = nuFromDistinctVectorG IM.insertWithKey IM.lookup . VU.fromList
+
 -- | Uniquifies the input first (resulting in an unspecified order).
 nuFromList :: (Ord a, Show a) => [a] -> Numbering a
 nuFromList = nuFromDistinctList . S.toList . S.fromList
 
+-- | Uniquifies the input first (resulting in an unspecified order).
+nuFromUnboxList :: (Ord a, Show a, Unbox a) => [a] -> Numbering a
+nuFromUnboxList = nuFromDistinctUnboxList . S.toList . S.fromList
+
+-- | Uniquifies the input first (resulting in an unspecified order).
+nuFromIntList :: [Int] -> Numbering Int
+nuFromIntList = nuFromDistinctIntList . IS.toList . IS.fromList
+
 finiteTypeNu :: (Enum a, Bounded a) => Numbering a
 finiteTypeNu = enumNu minBound maxBound
+
+idNu :: Int -- ^ The 'nuLength'  
+    -> Numbering Int
+idNu = UnsafeMkNumbering id id
+
 
