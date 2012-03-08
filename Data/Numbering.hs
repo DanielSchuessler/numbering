@@ -1,6 +1,34 @@
 {-# LANGUAGE NoMonomorphismRestriction, DeriveDataTypeable #-}
 {-# OPTIONS -Wall -fno-warn-unused-imports #-}
-module Data.Numbering where
+module Data.Numbering (
+    Numbering(..),
+    -- * Construction
+    enumNu,
+    enumNu',
+    nuFromSet,
+    nuFromDistinctVector,
+    nuFromDistinctVectorG,
+    nuFromDistinctList,
+    nuFromDistinctUnboxList,
+    nuFromDistinctIntList,
+    nuFromList,
+    nuFromUnboxList,
+    nuFromIntList,
+    finiteTypeNu,
+    idNu,
+    -- * Combination
+    sumNu,
+    eitherNu,
+    prodNu,
+    pairNu,
+    -- * Destruction
+    nuIndices,
+    nuElements,
+    NumberingBrokenInvariantException(..),
+    checkNu,
+    )
+
+    where
 
 import Data.Map(Map)
 import Data.Maybe
@@ -55,9 +83,9 @@ enumNu' mini maxi =
 
 -- | Creates a numbering for an 'Either'-like type, given numberings for the summand types.
 sumNu
-  ::    (a1 -> a)
-     -> (a2 -> a)
-     -> ((a1 -> Int) -> (a2 -> Int) -> a -> Int)
+  ::    (a1 -> a) -- ^ 'Left' equivalent
+     -> (a2 -> a) -- ^ 'Right' equivalent
+     -> ((a1 -> Int) -> (a2 -> Int) -> a -> Int) -- ^ 'either' equivalent
      -> Numbering a1
      -> Numbering a2
      -> Numbering a
@@ -78,9 +106,9 @@ eitherNu = sumNu Left Right either
 
 -- | Creates a numbering for an pair-like type, given numberings for the component types.
 prodNu
-  :: (a -> a2)
-     -> (a -> a1)
-     -> (a2 -> a1 -> a)
+  ::    (a -> a2) -- ^ 'fst' equivalent
+     -> (a -> a1) -- ^ 'snd' equivalent
+     -> (a2 -> a1 -> a) -- ^ @(,)@ equivalent
      -> Numbering a2
      -> Numbering a1
      -> Numbering a
@@ -126,7 +154,7 @@ checkNu nu =
           (nuIndices nu)
 
     
--- | "Data.Set" doesn't expose the necessary index-based API
+-- | (Uses a 'Map' because "Data.Set" doesn't expose the necessary index-based API)
 nuFromSet :: Map Int ignored -> Numbering Int
 nuFromSet m = 
     UnsafeMkNumbering
@@ -141,19 +169,19 @@ nuFromSet m =
 -- | The distinctness precondition is checked (we have to create a map anyway).
 nuFromDistinctVector
   :: (Ord a, Show a, VG.Vector v a) => v a -> Numbering a
-nuFromDistinctVector = nuFromDistinctVectorG M.insertWithKey M.lookup 
+nuFromDistinctVector = nuFromDistinctVectorG mempty M.insertWithKey M.lookup 
 
+-- | Allows customization of the map type used.
 nuFromDistinctVectorG
-  :: (Show a1,
-      Show t1,
-      Show a2,
-      Monoid a,
-      VG.Vector v a2) =>
-     ((a1 -> t1 -> t1 -> t) -> a2 -> Int -> a -> a)
-     -> (a2 -> a -> Maybe Int) -> v a2 -> Numbering a2
-nuFromDistinctVectorG _insertWithKey _lookup v =
+  :: (Show a, VG.Vector v a) =>
+
+     map -- ^ 'M.empty' equivalent
+     -> ((a -> Int -> Int -> t) -> a -> Int -> map -> map) -- ^ 'M.insertWithKey' equivalent 
+     -> (a -> map -> Maybe Int) -- ^ 'M.lookup' equivalent 
+     -> v a -> Numbering a
+nuFromDistinctVectorG _empty _insertWithKey _lookup v =
     let
-        m = VG.ifoldl' (\r i a -> _insertWithKey _err a i r) mempty v
+        m = VG.ifoldl' (\r i a -> _insertWithKey _err a i r) _empty v
 
         _err a i1 i2 = error ("nuFromDistinctVector: duplicate: " ++ show a++ " at indices "++show (i1,i2))
     in
@@ -171,8 +199,8 @@ nuFromDistinctList = nuFromDistinctVector . V.fromList
 nuFromDistinctUnboxList :: (Ord a, Show a, Unbox a) => [a] -> Numbering a
 nuFromDistinctUnboxList = nuFromDistinctVector . VU.fromList 
 
-nuFromDistinctIntList :: [IM.Key] -> Numbering IM.Key
-nuFromDistinctIntList = nuFromDistinctVectorG IM.insertWithKey IM.lookup . VU.fromList
+nuFromDistinctIntList :: [Int] -> Numbering Int
+nuFromDistinctIntList = nuFromDistinctVectorG mempty IM.insertWithKey IM.lookup . VU.fromList
 
 -- | Uniquifies the input first (resulting in an unspecified order).
 nuFromList :: (Ord a, Show a) => [a] -> Numbering a
@@ -189,6 +217,7 @@ nuFromIntList = nuFromDistinctIntList . IS.toList . IS.fromList
 finiteTypeNu :: (Enum a, Bounded a) => Numbering a
 finiteTypeNu = enumNu minBound maxBound
 
+-- | Identity numbering
 idNu :: Int -- ^ The 'nuLength'  
     -> Numbering Int
 idNu = UnsafeMkNumbering id id
