@@ -1,5 +1,5 @@
 {-# LANGUAGE NoMonomorphismRestriction, DeriveDataTypeable #-}
-{-# OPTIONS -Wall -fno-warn-unused-imports #-}
+{-# OPTIONS -Wall #-}
 module Data.Numbering (
     Numbering(..),
     -- * Construction
@@ -8,14 +8,25 @@ module Data.Numbering (
     nuFromSet,
     nuFromDistinctVector,
     nuFromDistinctVectorG,
+    finiteTypeNu,
+    idNu,
+    emptyNu,
+    -- ** From a list
     nuFromDistinctList,
     nuFromDistinctUnboxList,
     nuFromDistinctIntList,
     nuFromList,
     nuFromUnboxList,
     nuFromIntList,
-    finiteTypeNu,
-    idNu,
+    -- * Transformation
+    mapNu,
+    reindexNu,
+    consolidateNu,
+    consolidateUnboxNu,
+    nuTake,
+    -- ** Particular reindexings
+    reverseNu,
+    nuDrop,
     -- * Combination
     sumNu,
     eitherNu,
@@ -24,48 +35,69 @@ module Data.Numbering (
     -- * Destruction
     nuIndices,
     nuElements,
+    nuToList,
+    nuToDistinctList,
+    nuToVector,
+    nuToDistinctVector,
     NumberingBrokenInvariantException(..),
     checkNu,
     )
 
     where
 
+import Control.Exception
+import Control.Monad
 import Data.Map(Map)
 import Data.Maybe
--- import PrettyUtil
--- import THUtil
--- import Util
-import qualified Data.Map as M
-import qualified Data.Vector as V
-import Control.Monad
-import qualified Data.Set as S
-import Data.Set(Set)
-import Data.Typeable(Typeable)
-import Control.Exception
-import qualified Data.Vector.Generic as VG
-import qualified Data.Vector.Unboxed as VU
-import Data.Vector.Unboxed(Unbox)
 import Data.Monoid(mempty)
-import Data.Monoid(Monoid)
+import Data.Typeable(Typeable)
+import Data.Vector.Unboxed(Unbox)
 import qualified Data.IntMap as IM
 import qualified Data.IntSet as IS
+import qualified Data.Map as M
+import qualified Data.Set as S
+import qualified Data.Vector as V
+import qualified Data.Vector.Generic as VG
+import qualified Data.Vector.Unboxed as VU
+import Debug.Trace
+import Data.Function
 
 
--- | Invariant: For all @i@ in @[ 0 .. 'nuLength' - 1 ]@, @'toInt' ('fromInt' i) == i@. 
+-- | Invariant: 
 --
--- This implies that for all @a@ of the form @'fromInt' i@ (with @i@ in @[ 0 .. 'nuLength' - 1 ]@), @'fromInt' ('toInt' a) = a@.
+-- @
+-- For all i in 0 .. 'nuLength' - 1, 
+--     'toInt' ('fromInt' i) == i 
+-- @
+--
+-- This implies that 
+--
+-- @
+-- For all a of the form 'fromInt' i (with i in 0 .. 'nuLength' - 1), 
+--     'fromInt' ('toInt' a) = a
+-- @
 --
 -- The behaviour of @fromInt@ for out-of-bounds indices and that of @toInt@ for elements not occuring in the numbering is undefined. 
+--
+-- Thus, assuming the invariant holds, @toInt@ is uniquely determined by @fromInt@ (on valid inputs).
 data Numbering a = UnsafeMkNumbering {
     toInt :: a -> Int,
     fromInt :: Int -> a,
     nuLength :: Int
 }
+    -- ^ \"Unsafe\" because the invariant isn't checked.
 
 instance Show a => Show (Numbering a) where
     showsPrec prec nu = 
         showParen (prec > 10) 
             (showString "nuFromDistinctList " . showsPrec 11 (nuElements nu))
+
+-- | Assumes that the invariant holds.
+instance Eq a => Eq (Numbering a) where
+    nu1 == nu2 =
+        ((==) `on` nuLength) nu1 nu2
+        &&
+        all (\i -> fromInt nu1 i == fromInt nu2 i) (nuIndices nu1)
 
 -- | @enumNu a b@ creates a numbering of the elements @[a .. b]@ (inclusively). 
 enumNu :: (Enum a) => a -> a -> Numbering a
@@ -135,6 +167,21 @@ nuIndices nu = [0.. nuLength nu-1]
 nuElements :: Numbering a -> [a]
 nuElements nu = fmap (fromInt nu) (nuIndices nu)
 
+-- | = 'nuElements'.
+nuToList :: Numbering a -> [a]
+nuToList = nuElements 
+
+-- | = 'nuElements'. Won't actually be distinct if the invariant is broken.
+nuToDistinctList :: Numbering a -> [a]
+nuToDistinctList = nuElements 
+
+nuToVector :: VG.Vector v a => Numbering a -> v a
+nuToVector nu = VG.generate (nuLength nu) (fromInt nu)
+
+-- | = 'nuToVector'. Won't actually be distinct if the invariant is broken.
+nuToDistinctVector :: VG.Vector v a => Numbering a -> v a
+nuToDistinctVector nu = VG.generate (nuLength nu) (fromInt nu)
+
 data NumberingBrokenInvariantException a = NumberingBrokenInvariantException {
     nbie_index :: Int,
     nbie_fromIntOfIndex :: a,
@@ -196,6 +243,7 @@ nuFromDistinctVectorG _empty _insertWithKey _lookup v =
 nuFromDistinctList :: (Ord a, Show a) => [a] -> Numbering a
 nuFromDistinctList = nuFromDistinctVector . V.fromList 
 
+-- | See 'nuFromDistinctVector'.
 nuFromDistinctUnboxList :: (Ord a, Show a, Unbox a) => [a] -> Numbering a
 nuFromDistinctUnboxList = nuFromDistinctVector . VU.fromList 
 
@@ -214,6 +262,7 @@ nuFromUnboxList = nuFromDistinctUnboxList . S.toList . S.fromList
 nuFromIntList :: [Int] -> Numbering Int
 nuFromIntList = nuFromDistinctIntList . IS.toList . IS.fromList
 
+-- | Numbering of all elements of a finite type.
 finiteTypeNu :: (Enum a, Bounded a) => Numbering a
 finiteTypeNu = enumNu minBound maxBound
 
@@ -222,4 +271,93 @@ idNu :: Int -- ^ The 'nuLength'
     -> Numbering Int
 idNu = UnsafeMkNumbering id id
 
+emptyNu :: Numbering a
+emptyNu = UnsafeMkNumbering {
+    nuLength = 0,
+    toInt = \_ -> error "emptyNu/toInt",
+    fromInt = \i -> error ("emptyNu/fromInt "++show i)
+}
 
+-- | In @mapNu f g nu@, the arguments must satisfy
+--
+-- @
+-- For all i in 0 .. 'nuLength' nu - 1, 
+--     (g . f) a == a
+--          where
+--              a = 'fromInt' nu i
+-- @
+mapNu :: (a -> b) -> (b -> a) -> Numbering a -> Numbering b
+mapNu toNew toOld nu =
+    UnsafeMkNumbering {
+        toInt = toInt nu . toOld,
+        fromInt = toNew . fromInt nu,
+        nuLength = nuLength nu
+    }
+
+
+-- | In @reindexNu k f g nu@, the arguments must satisfy
+--
+-- @
+-- For all i in 0 .. k,
+--     (g . f) i == i
+-- @
+--
+-- Note: Decreasing the length with this function will /not/ release any memory retained
+-- by the closures in the input numbering (e.g. the vector, for numberings created by 'nuFromDistinctVector'). Use 'consolidateNu' afterwards for that.
+reindexNu
+  :: Int -- ^ New 'nuLength'
+     -> (Int -> Int) -- ^ Old index to new index 
+     -> (Int -> Int) -- ^ New index to old index
+     -> Numbering a -> Numbering a
+reindexNu newLength toNewIndex toOldIndex nu =
+   (if newLength > oldLength
+    then trace ("reindexNu: Warning: newLength > oldLength "++show (newLength,oldLength)++
+                    ". This implies that the new-to-old-index function is non-injective, or "++
+                    "relies on the behaviour of the input numbering outside of its bounds.")
+    else id)
+        UnsafeMkNumbering {
+            toInt = toNewIndex . toInt nu,
+            fromInt = fromInt nu . toOldIndex,
+            nuLength = newLength
+        }
+
+  where
+    oldLength = nuLength nu
+
+reverseNu :: Numbering a -> Numbering a
+reverseNu nu = reindexNu n (n -) (n -) nu
+    where
+        n = nuLength nu
+
+-- Identity for arg at least equal to the input length.
+--
+-- See the note in 'consolidateNu' about memory usage.
+nuTake :: Int -> Numbering a -> Numbering a
+nuTake k nu 
+    | k >= nuLength nu = nu
+    | k <= 0 = emptyNu
+    | otherwise = nu { nuLength = k }
+
+
+
+idBoxedVector :: V.Vector a -> V.Vector a
+idBoxedVector = id
+
+idUnboxedVector :: VU.Vector a -> VU.Vector a
+idUnboxedVector = id
+
+-- | Semantic 'id' (for in-bounds inputs), but backs the numbering with a new vector and map having just the required length (example: @consolidateNu ('nuTake' 1 ('nuFromDistinctVector' largeVector))@). 
+consolidateNu :: (Ord a, Show a) => Numbering a -> Numbering a
+consolidateNu = nuFromDistinctVector . idBoxedVector . nuToDistinctVector  
+
+-- | Like 'consolidateNu', but uses unboxed vectors.
+consolidateUnboxNu :: (Ord a, Show a, Unbox a) => Numbering a -> Numbering a
+consolidateUnboxNu = nuFromDistinctVector . idUnboxedVector . nuToDistinctVector
+
+-- | Identity for nonpositive arg.
+nuDrop :: Int -> Numbering a -> Numbering a
+nuDrop k nu | k <= 0 = nu
+            | k >= n = emptyNu
+            | otherwise = reindexNu (n - k) (subtract k) (+ k) nu 
+    where
+        n = nuLength nu

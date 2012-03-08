@@ -1,5 +1,5 @@
 Name:                numbering
-Version:             0.2
+Version:             0.2.1
 Synopsis:            Combinators for creating bijections from some type to the natural numbers.
 Description:
     Combinators for creating bijections from a subset of an arbitrary type to a range of 'Int's,
