@@ -14,6 +14,12 @@ Category:            Data
 Build-type:          Simple
 -- Extra-source-files:  
 Cabal-version:       >=1.2
+Homepage:            https://github.com/DanielSchuessler/numbering
+
+Source-Repository head
+    type:   git
+    location: git@github.com:DanielSchuessler/numbering.git
+
 
 Library
   Exposed-modules:     Data.Numbering
