@@ -325,7 +325,7 @@ reindexNu newLength toNewIndex toOldIndex nu =
     oldLength = nuLength nu
 
 reverseNu :: Numbering a -> Numbering a
-reverseNu nu = reindexNu n (n -) (n -) nu
+reverseNu nu = reindexNu n (pred n -) (pred n -) nu
     where
         n = nuLength nu
 
